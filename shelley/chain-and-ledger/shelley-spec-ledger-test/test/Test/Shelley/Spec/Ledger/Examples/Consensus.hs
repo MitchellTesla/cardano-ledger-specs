@@ -1,9 +1,11 @@
 {-# LANGUAGE ConstraintKinds #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Test.Shelley.Spec.Ledger.Examples.Consensus where
 
@@ -12,11 +14,13 @@ import Cardano.Crypto.DSIGN as DSIGN
 import Cardano.Crypto.Hash as Hash
 import Cardano.Crypto.Seed as Seed
 import Cardano.Crypto.VRF as VRF
+import Cardano.Ledger.AuxiliaryData
 import Cardano.Ledger.Coin
 import Cardano.Ledger.Core
 import Cardano.Ledger.Crypto
 import Cardano.Ledger.Era
 import Cardano.Ledger.SafeHash
+import Cardano.Ledger.Shelley (ShelleyEra)
 import Cardano.Ledger.Shelley.Constraints
 import Cardano.Slotting.Block
 import Cardano.Slotting.EpochInfo
@@ -28,7 +32,9 @@ import Data.Default.Class
 import Data.Functor.Identity (Identity (..))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (fromJust)
 import Data.Proxy
+import Data.Sequence.Strict (StrictSeq)
 import qualified Data.Sequence.Strict as StrictSeq
 import Data.Set (Set)
 import qualified Data.Set as Set
@@ -44,11 +50,19 @@ import Shelley.Spec.Ledger.PParams
 import Shelley.Spec.Ledger.STS.Delegs
 import Shelley.Spec.Ledger.STS.Ledger
 import Shelley.Spec.Ledger.Serialization
+import Shelley.Spec.Ledger.Tx
+import Shelley.Spec.Ledger.UTxO
 import Test.Shelley.Spec.Ledger.Generator.Core
 import Test.Shelley.Spec.Ledger.Orphans ()
 import Test.Shelley.Spec.Ledger.Utils hiding (mkVRFKeyPair)
 
+instance PraosCrypto StandardCrypto
+
 type KeyPairWits era = [KeyPair 'Witness (Cardano.Ledger.Era.Crypto era)]
+
+{-------------------------------------------------------------------------------
+  ShelleyLedgerExamples
+-------------------------------------------------------------------------------}
 
 data ShelleyResultExamples era = ShelleyResultExamples
   { srePParams :: Shelley.Spec.Ledger.PParams.PParams era,
@@ -72,11 +86,15 @@ data ShelleyLedgerExamples era = ShelleyLedgerExamples
     sleChainDepState :: ChainDepState (Cardano.Ledger.Era.Crypto era)
   }
 
+{-------------------------------------------------------------------------------
+  Default constructor
+-------------------------------------------------------------------------------}
+
 type ShelleyBasedEra' era =
   ( ShelleyBasedEra era,
     ToCBORGroup (TxSeq era),
-    ToCBORGroup (Witnesses era),
     ToCBOR (Witnesses era),
+    Witnesses era ~ WitnessSet era,
     Default (State (EraRule "PPUP" era))
   )
 
@@ -130,6 +148,10 @@ defaultShelleyLedgerExamples mkWitnesses mkValidatedTx value txBody auxData =
               ],
           sreShelleyGenesis = testShelleyGenesis
         }
+
+{-------------------------------------------------------------------------------
+  Helper constructors
+-------------------------------------------------------------------------------}
 
 exampleShelleyLedgerBlock ::
   forall era.
@@ -343,6 +365,107 @@ mkDummySafeHash _ =
   unsafeMakeSafeHash
     . mkDummyHash (Proxy @(HASH c))
 
+{-------------------------------------------------------------------------------
+  Shelley era specific functions
+-------------------------------------------------------------------------------}
+
+type StandardShelley = ShelleyEra StandardCrypto
+
+-- | ShelleyLedgerExamples for Shelley era
+ledgerExamplesShelley :: ShelleyLedgerExamples StandardShelley
+ledgerExamplesShelley =
+  defaultShelleyLedgerExamples
+    (mkWitnessesPreAlonzo (Proxy @StandardShelley))
+    id
+    exampleCoin
+    exampleTxBodyShelley
+    exampleAuxiliaryDataShelley
+
+mkWitnessesPreAlonzo ::
+  ShelleyBasedEra' era =>
+  Proxy era ->
+  Cardano.Ledger.Core.TxBody era ->
+  KeyPairWits era ->
+  WitnessSet era
+mkWitnessesPreAlonzo _ txBody keyPairWits =
+  mempty
+    { addrWits =
+        makeWitnessesVKey (coerce (hashAnnotated txBody)) keyPairWits
+    }
+
+exampleCoin :: Coin
+exampleCoin = Coin 10
+
+
+exampleTxBodyShelley :: Shelley.Spec.Ledger.API.TxBody StandardShelley
+exampleTxBodyShelley =
+  Shelley.Spec.Ledger.API.TxBody
+    exampleTxIns
+    ( StrictSeq.fromList
+        [ TxOut (mkAddr (examplePayKey, exampleStakeKey)) (Coin 100000)
+        ]
+    )
+    exampleCerts
+    exampleWithdrawals
+    (Coin 3)
+    (SlotNo 10)
+    (SJust (Update exampleProposedPPUpdates (EpochNo 0)))
+    (SJust auxiliaryDataHash)
+  where
+    -- Dummy hash to decouple from the auxiliaryData in 'exampleTx'.
+    auxiliaryDataHash :: AuxiliaryDataHash StandardCrypto
+    auxiliaryDataHash =
+      AuxiliaryDataHash $ mkDummySafeHash (Proxy @StandardCrypto) 30
+
+exampleMetadataMap :: Map Word64 Metadatum
+exampleMetadataMap =
+  Map.fromList
+    [ (1, S "string"),
+      (2, B "bytes"),
+      (3, List [I 1, I 2]),
+      (4, Map [(I 3, B "b")])
+    ]
+
+exampleAuxiliaryDataShelley :: AuxiliaryData StandardShelley
+exampleAuxiliaryDataShelley = Metadata exampleMetadataMap
+
+exampleTxIns :: Cardano.Ledger.Crypto.Crypto c => Set (TxIn c)
+exampleTxIns =
+  Set.fromList
+    [ TxIn (TxId (mkDummySafeHash Proxy 1)) 0
+    ]
+
+exampleCerts :: Cardano.Ledger.Crypto.Crypto c => StrictSeq (DCert c)
+exampleCerts =
+  StrictSeq.fromList
+    [ DCertDeleg (RegKey (keyToCredential exampleStakeKey)),
+      DCertPool (RegPool examplePoolParams),
+      DCertMir $
+        MIRCert ReservesMIR $
+          StakeAddressesMIR $
+            Map.fromList
+              [ (keyToCredential (mkDSIGNKeyPair 2), DeltaCoin 110)
+              ]
+    ]
+
+exampleWithdrawals :: Cardano.Ledger.Crypto.Crypto c => Wdrl c
+exampleWithdrawals =
+  Wdrl $
+    Map.fromList
+      [ (_poolRAcnt examplePoolParams, Coin 100)
+      ]
+
+exampleProposedPPUpdates ::
+  ( PParamsDelta era ~ PParams' StrictMaybe era,
+    ShelleyBasedEra' era
+  ) =>
+  ProposedPPUpdates era
+exampleProposedPPUpdates =
+  ProposedPPUpdates $
+    Map.singleton
+      (mkKeyHash 1)
+      (emptyPParamsUpdate {_maxBHSize = SJust 4000})
+
 examplePayKey :: Cardano.Ledger.Crypto.Crypto c => KeyPair 'Payment c
 examplePayKey = mkDSIGNKeyPair 0
 
@@ -396,3 +519,23 @@ mkVRFKeyPair _ byte = (sk, VRF.deriveVerKeyVRF sk)
 
     sk = VRF.genKeyVRF seed
 
+examplePoolParams :: forall c. Cardano.Ledger.Crypto.Crypto c => PoolParams c
+examplePoolParams =
+  PoolParams
+    { _poolId = hashKey $ vKey $ cold poolKeys,
+      _poolVrf = hashVerKeyVRF $ snd $ vrf poolKeys,
+      _poolPledge = Coin 1,
+      _poolCost = Coin 5,
+      _poolMargin = unsafeMkUnitInterval 0.1,
+      _poolRAcnt = RewardAcnt Testnet (keyToCredential exampleStakeKey),
+      _poolOwners = Set.singleton $ hashKey $ vKey exampleStakeKey,
+      _poolRelays = StrictSeq.empty,
+      _poolMD =
+        SJust $
+          PoolMetadata
+            { _poolMDUrl = fromJust $ textToUrl "consensus.pool",
+              _poolMDHash = "{}"
+            }
+    }
+  where
+    poolKeys = exampleKeys @c @'StakePool
