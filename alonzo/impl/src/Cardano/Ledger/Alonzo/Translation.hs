@@ -1,13 +1,17 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Cardano.Ledger.Alonzo.Translation where
@@ -21,6 +25,7 @@ import Cardano.Binary
   )
 import Cardano.Ledger.Alonzo (AlonzoEra)
 import Cardano.Ledger.Alonzo.Genesis (AlonzoGenesis (..), extendPPWithGenesis)
+import Cardano.Ledger.Alonzo.Language (Language)
 import Cardano.Ledger.Alonzo.PParams (PParams, PParamsUpdate, extendPP)
 import Cardano.Ledger.Alonzo.Tx (IsValidating (..), ValidatedTx (..))
 import Cardano.Ledger.Alonzo.TxBody (TxOut (..))
@@ -38,6 +43,10 @@ import qualified Cardano.Ledger.Tx as LTX
 import Control.Monad.Except (Except, throwError)
 import Data.Coders
 import Data.Text (Text)
+import Data.Typeable (Typeable)
+import GHC.Generics (Generic)
+import NoThunks.Class (NoThunks)
+import Numeric.Natural (Natural)
 import Shelley.Spec.Ledger.API
   ( EpochState (..),
     NewEpochState (..),
@@ -111,6 +120,14 @@ instance Crypto c => TranslateEra (AlonzoEra c) ShelleyGenesis where
         }
 
 newtype TxInBlock era = TxInBlock (Era.TxInBlock era)
+
+deriving newtype instance
+  (Typeable era, ToCBOR (Era.TxInBlock era)) =>
+  ToCBOR (TxInBlock era)
+
+deriving newtype instance
+  (Show (Era.TxInBlock era)) =>
+  Show (TxInBlock era)
 
 instance
   ( Crypto c,
