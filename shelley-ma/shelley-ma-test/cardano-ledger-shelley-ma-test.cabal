@@ -47,6 +47,7 @@ library
     Test.Cardano.Ledger.MaryEraGen
     Test.Cardano.Ledger.Mary.Golden
     Test.Cardano.Ledger.AllegraEraGen
+    Test.Cardano.Ledger.Allegra.Examples.Consensus
     Test.Cardano.Ledger.ShelleyMA.TxBody
     Test.Cardano.Ledger.ShelleyMA.Serialisation.Coders
     Test.Cardano.Ledger.ShelleyMA.Serialisation.Generators
@@ -66,6 +67,7 @@ library
     cardano-slotting,
     cborg,
     containers,
+    data-default-class,
     generic-random,
     hashable,
     mtl,
@@ -78,6 +80,7 @@ library
     tasty-quickcheck,
     tasty,
     text,
+    time,
   hs-source-dirs: src
 
 test-suite cardano-ledger-shelley-ma-test
